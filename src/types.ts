@@ -112,6 +112,19 @@ export interface RiskFactors {
     taskType: 'bug' | 'feature' | 'chore' | 'refactor';
 }
 
+// Proactive feature proposal
+export interface Proposal {
+    id: string;
+    project_id: string;
+    title: string;
+    rationale: string;
+    source_context: string | null;  // JSON: signals that triggered this
+    status: 'proposed' | 'approved' | 'rejected' | 'converted';
+    converted_task_id: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
 // Global Fleet configuration (~/.fleet/config.json)
 export interface FleetGlobalConfig {
     maxGlobalConcurrency: number;

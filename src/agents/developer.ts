@@ -198,6 +198,9 @@ export class DeveloperAgent implements Agent {
                 const output = data.toString();
                 stdout += output;
 
+                // Stream output to console for visibility
+                process.stdout.write(output);
+
                 // Parse iteration count from Ralph output
                 const iterMatch = output.match(/Iteration (\d+)/);
                 if (iterMatch) {
@@ -211,7 +214,10 @@ export class DeveloperAgent implements Agent {
             });
 
             ralph.stderr?.on('data', (data) => {
-                stderr += data.toString();
+                const output = data.toString();
+                stderr += output;
+                // Stream stderr as well
+                process.stderr.write(output);
             });
 
             ralph.on('close', (code) => {

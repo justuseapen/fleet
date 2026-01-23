@@ -31,6 +31,7 @@ export interface PendingApproval {
 
 /**
  * Get all pending approvals with enriched data
+ * Note: This only returns task-based PRDs. For proposal-based PRDs, use getProposalsByStatus('proposed')
  */
 export function getPendingApprovals(includeQuality = false): PendingApproval[] {
     const pendingPrds = getPrdsByStatus('pending');
@@ -38,6 +39,9 @@ export function getPendingApprovals(includeQuality = false): PendingApproval[] {
     const analyzer = getCodebaseAnalyzer();
 
     for (const prd of pendingPrds) {
+        // Skip proposal-based PRDs (no task_id)
+        if (!prd.task_id) continue;
+
         const project = getProjectById(prd.project_id);
         const task = prd.task_id ? getTaskById(prd.task_id) ?? null : null;
 
@@ -102,6 +106,8 @@ export function approvePrd(prdId: string, approvedBy: string): void {
     }
 
     updatePrdStatus(prdId, 'approved', approvedBy);
+
+    // Only update task status if there's a linked task (not proposal-based)
     if (prd.task_id) {
         updateTaskStatus(prd.task_id, 'approved');
     }
@@ -127,6 +133,8 @@ export function rejectPrd(prdId: string, reason?: string): void {
     }
 
     updatePrdStatus(prdId, 'rejected');
+
+    // Only update task status if there's a linked task (not proposal-based)
     if (prd.task_id) {
         updateTaskStatus(prd.task_id, 'backlog');
     }
@@ -171,6 +179,7 @@ export function recalculateRiskScore(prdId: string): number {
         throw new Error(`PRD ${prdId} not found`);
     }
 
+    // Determine task type from task or default to 'feature' for proposal-based PRDs
     const task = prd.task_id ? getTaskById(prd.task_id) : null;
     const taskType = task?.task_type || 'feature';
 
