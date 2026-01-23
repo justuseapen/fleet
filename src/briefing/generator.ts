@@ -6,6 +6,7 @@ import {
     getRunsByStatus,
     getProjectById,
     getTaskById,
+    getTasksByProject,
     type WorkLog,
     type Prd,
     type Run,
@@ -126,10 +127,9 @@ function gatherBriefingData(): BriefingData {
     const suggestedPriorities: BriefingData['suggestedPriorities'] = [];
 
     for (const project of projects) {
-        const { getTasksByProject } = require('../db/index.js');
         const tasks = getTasksByProject(project.id);
         const highPriority = tasks
-            .filter((t: { status: string; priority: string }) => t.status === 'backlog' && (t.priority === 'critical' || t.priority === 'high'))
+            .filter(t => t.status === 'backlog' && (t.priority === 'critical' || t.priority === 'high'))
             .slice(0, 2);
 
         for (const task of highPriority) {
