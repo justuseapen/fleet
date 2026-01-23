@@ -1,0 +1,26 @@
+{
+  "projectId": "example-project-id",
+  "name": "My Project",
+  "taskSource": {
+    "type": "github",
+    "owner": "myusername",
+    "repo": "myrepo"
+  },
+  "mission": "Build an amazing product that solves real problems",
+  "agents": {
+    "planner": true,
+    "developer": true,
+    "qa": true,
+    "strategic": true
+  },
+  "approval": {
+    "autoApproveThreshold": 30,
+    "requireApprovalTypes": ["feature", "refactor"]
+  },
+  "execution": {
+    "maxConcurrentAgents": 2,
+    "defaultIterations": 10,
+    "tool": "claude",
+    "branchPrefix": "fleet/"
+  }
+}
