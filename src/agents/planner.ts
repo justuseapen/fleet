@@ -2,14 +2,15 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Agent, AgentContext, AgentResult } from './base.js';
 import type { PrdJson, UserStory } from '../types.js';
 import { calculateRiskScore, extractRiskFactors, getRiskBreakdown } from '../approval/risk.js';
-import { insertPrd, generateId, updateTaskStatus, type Task } from '../db/index.js';
+import { insertPrd, generateId, updateTaskStatus, getTasksByProject, type Task, type Project } from '../db/index.js';
+import { getCodebaseAnalyzer, DependencyMapper, type CodebaseAnalysis } from '../analysis/index.js';
 
 const PRD_SYSTEM_PROMPT = `You are an expert software architect and product manager. Your job is to take a task or feature request and create a detailed Product Requirements Document (PRD) that can be executed by an autonomous coding agent.
 
 The PRD must include:
 1. A clear summary of the feature/task
 2. Detailed acceptance criteria
-3. Technical considerations
+3. Technical considerations (based on the codebase analysis provided)
 4. User stories broken down into small, atomic units
 
 CRITICAL: Each user story MUST be completable in a single context window by an AI agent. If a story is too large, break it down further.
@@ -19,6 +20,12 @@ For each user story, include:
 - Description in "As a [user], I want [feature] so that [benefit]" format
 - Specific acceptance criteria (always include "Typecheck passes")
 - Priority (1 = highest)
+
+IMPORTANT: Use the codebase context provided to:
+- Follow existing patterns and conventions
+- Reference specific files that need to be modified
+- Ensure consistency with the existing architecture
+- Mention prerequisite tasks if any are identified
 
 Output the PRD in two parts:
 1. The full PRD as markdown
@@ -34,7 +41,18 @@ Task Description: {taskDescription}
 Task Type: {taskType}
 Labels: {labels}
 
+## Codebase Context
+
+{codebaseContext}
+
+## Dependency Analysis
+
+{dependencyContext}
+
+---
+
 Generate a comprehensive PRD with user stories that can be executed autonomously.
+Use the codebase context to ensure the PRD follows existing patterns and references the correct files.
 
 Return your response in this exact format:
 
@@ -65,9 +83,10 @@ Return your response in this exact format:
 
 export class PlannerAgent implements Agent {
     name = 'planner';
-    description = 'Generates PRDs from tasks using Claude';
+    description = 'Generates PRDs from tasks using Claude with codebase analysis';
 
     private client: Anthropic;
+    private analyzer = getCodebaseAnalyzer();
 
     constructor(apiKey?: string) {
         this.client = new Anthropic({
@@ -86,8 +105,20 @@ export class PlannerAgent implements Agent {
         }
 
         try {
-            // Generate PRD using Claude
-            const { prdContent, prdJson } = await this.generatePrd(project, task);
+            // Analyze codebase for context
+            let codebaseAnalysis: CodebaseAnalysis | null = null;
+            try {
+                codebaseAnalysis = await this.analyzer.analyze(project.id, project.path);
+            } catch (error) {
+                console.warn('Codebase analysis failed, continuing without context:', error);
+            }
+
+            // Generate PRD using Claude with enhanced context
+            const { prdContent, prdJson } = await this.generatePrd(
+                project,
+                task,
+                codebaseAnalysis
+            );
 
             // Calculate risk score
             const riskFactors = extractRiskFactors(prdContent, prdJson, task.task_type);
@@ -99,6 +130,7 @@ export class PlannerAgent implements Agent {
             insertPrd({
                 id: prdId,
                 task_id: task.id,
+                proposal_id: null,
                 project_id: project.id,
                 content: prdContent,
                 prd_json: JSON.stringify(prdJson),
@@ -119,6 +151,7 @@ export class PlannerAgent implements Agent {
                     prdId,
                     riskScore,
                     storyCount: prdJson.userStories.length,
+                    hasCodebaseContext: !!codebaseAnalysis,
                 },
             };
         } catch (error) {
@@ -130,9 +163,39 @@ export class PlannerAgent implements Agent {
     }
 
     private async generatePrd(
-        project: { name: string; mission: string | null },
-        task: Task
+        project: Project,
+        task: Task,
+        analysis: CodebaseAnalysis | null
     ): Promise<{ prdContent: string; prdJson: PrdJson }> {
+        // Get codebase context summary
+        const codebaseContext = analysis
+            ? this.analyzer.getSummaryForPrompt(analysis)
+            : 'No codebase analysis available.';
+
+        // Analyze dependencies
+        let dependencyContext = 'No dependency analysis available.';
+        if (analysis) {
+            try {
+                const dependencyMapper = new DependencyMapper(project.path);
+
+                // Get other tasks for dependency detection
+                const otherTasks = getTasksByProject(project.id)
+                    .filter(t => t.id !== task.id && t.status === 'backlog')
+                    .map(t => ({ id: t.id, title: t.title, description: t.description || '' }));
+
+                const depAnalysis = await dependencyMapper.analyzeForTask(
+                    task.title,
+                    task.description || '',
+                    analysis,
+                    otherTasks
+                );
+
+                dependencyContext = dependencyMapper.formatForPrompt(depAnalysis);
+            } catch (error) {
+                console.warn('Dependency analysis failed:', error);
+            }
+        }
+
         const prompt = PRD_USER_TEMPLATE
             .replace(/{projectName}/g, project.name)
             .replace(/{mission}/g, project.mission || 'Not specified')
@@ -140,7 +203,9 @@ export class PlannerAgent implements Agent {
             .replace(/{taskDescription}/g, task.description || 'No description provided')
             .replace(/{taskType}/g, task.task_type)
             .replace(/{taskId}/g, task.external_id)
-            .replace(/{labels}/g, task.labels ? JSON.parse(task.labels).join(', ') : 'None');
+            .replace(/{labels}/g, task.labels ? JSON.parse(task.labels).join(', ') : 'None')
+            .replace(/{codebaseContext}/g, codebaseContext)
+            .replace(/{dependencyContext}/g, dependencyContext);
 
         const message = await this.client.messages.create({
             model: 'claude-sonnet-4-20250514',
