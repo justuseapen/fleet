@@ -16,49 +16,80 @@ import {
     determineApprovalRequirement,
     getRiskBreakdown,
 } from './risk.js';
+import { calculateQualityScore, type QualityScore } from './quality.js';
+import { getCodebaseAnalyzer } from '../analysis/index.js';
 import type { PrdJson, ApprovalConfig } from '../types.js';
 
 export interface PendingApproval {
     prd: Prd;
     project: Project;
-    task: Task;
+    task: Task | null; // Null for proposal-based PRDs
     riskBreakdown: Record<string, { score: number; description: string }>;
     approvalRequirement: 'auto-approve' | 'review' | 'require-approval';
+    quality?: QualityScore; // Quality score for the PRD
 }
 
 /**
  * Get all pending approvals with enriched data
  */
-export function getPendingApprovals(): PendingApproval[] {
+export function getPendingApprovals(includeQuality = false): PendingApproval[] {
     const pendingPrds = getPrdsByStatus('pending');
     const approvals: PendingApproval[] = [];
+    const analyzer = getCodebaseAnalyzer();
 
     for (const prd of pendingPrds) {
         const project = getProjectById(prd.project_id);
-        const task = getTaskById(prd.task_id);
+        const task = prd.task_id ? getTaskById(prd.task_id) ?? null : null;
 
-        if (!project || !task) continue;
+        if (!project) continue;
+        // Allow PRDs without tasks (proposal-based)
+        if (prd.task_id && !task) continue;
 
         const approvalConfig: ApprovalConfig = JSON.parse(project.approval_config);
         const prdJson: PrdJson = JSON.parse(prd.prd_json);
-        const riskFactors = extractRiskFactors(prd.content, prdJson, task.task_type);
+        const taskType = task?.task_type || 'feature'; // Default to feature for proposals
+        const riskFactors = extractRiskFactors(prd.content, prdJson, taskType);
 
-        approvals.push({
+        const approval: PendingApproval = {
             prd,
             project,
             task,
             riskBreakdown: getRiskBreakdown(riskFactors),
             approvalRequirement: determineApprovalRequirement(
                 prd.risk_score,
-                task.task_type,
+                taskType,
                 approvalConfig.autoApproveThreshold,
                 approvalConfig.requireApprovalTypes
             ),
-        });
+        };
+
+        // Calculate quality score if requested
+        if (includeQuality) {
+            try {
+                const codebaseAnalysis = analyzer.getFromCache(project.id);
+                approval.quality = calculateQualityScore(prd.content, prdJson, codebaseAnalysis);
+            } catch {
+                // Skip quality if analysis fails
+            }
+        }
+
+        approvals.push(approval);
     }
 
     // Sort by risk score descending
     return approvals.sort((a, b) => b.prd.risk_score - a.prd.risk_score);
+}
+
+/**
+ * Get pending approvals sorted by quality score
+ */
+export function getPendingApprovalsByQuality(): PendingApproval[] {
+    const approvals = getPendingApprovals(true);
+    return approvals.sort((a, b) => {
+        const qualityA = a.quality?.overall ?? 0;
+        const qualityB = b.quality?.overall ?? 0;
+        return qualityB - qualityA;
+    });
 }
 
 /**
@@ -71,7 +102,9 @@ export function approvePrd(prdId: string, approvedBy: string): void {
     }
 
     updatePrdStatus(prdId, 'approved', approvedBy);
-    updateTaskStatus(prd.task_id, 'approved');
+    if (prd.task_id) {
+        updateTaskStatus(prd.task_id, 'approved');
+    }
 
     const project = getProjectById(prd.project_id);
     insertWorkLog({
@@ -79,7 +112,7 @@ export function approvePrd(prdId: string, approvedBy: string): void {
         run_id: null,
         project_id: prd.project_id,
         event_type: 'approved',
-        summary: `PRD approved for task in ${project?.name || 'unknown project'}`,
+        summary: `PRD approved for ${prd.task_id ? 'task' : 'proposal'} in ${project?.name || 'unknown project'}`,
         details: JSON.stringify({ prd_id: prdId, approved_by: approvedBy }),
     });
 }
@@ -94,7 +127,9 @@ export function rejectPrd(prdId: string, reason?: string): void {
     }
 
     updatePrdStatus(prdId, 'rejected');
-    updateTaskStatus(prd.task_id, 'backlog');
+    if (prd.task_id) {
+        updateTaskStatus(prd.task_id, 'backlog');
+    }
 
     const project = getProjectById(prd.project_id);
     insertWorkLog({
@@ -102,7 +137,7 @@ export function rejectPrd(prdId: string, reason?: string): void {
         run_id: null,
         project_id: prd.project_id,
         event_type: 'rejected',
-        summary: `PRD rejected for task in ${project?.name || 'unknown project'}`,
+        summary: `PRD rejected for ${prd.task_id ? 'task' : 'proposal'} in ${project?.name || 'unknown project'}`,
         details: JSON.stringify({ prd_id: prdId, reason }),
     });
 }
@@ -136,13 +171,11 @@ export function recalculateRiskScore(prdId: string): number {
         throw new Error(`PRD ${prdId} not found`);
     }
 
-    const task = getTaskById(prd.task_id);
-    if (!task) {
-        throw new Error(`Task not found for PRD ${prdId}`);
-    }
+    const task = prd.task_id ? getTaskById(prd.task_id) : null;
+    const taskType = task?.task_type || 'feature';
 
     const prdJson: PrdJson = JSON.parse(prd.prd_json);
-    const factors = extractRiskFactors(prd.content, prdJson, task.task_type);
+    const factors = extractRiskFactors(prd.content, prdJson, taskType);
 
     return calculateRiskScore(factors);
 }

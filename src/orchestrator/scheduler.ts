@@ -127,13 +127,13 @@ export class Scheduler {
     ): Promise<{ success: boolean; error?: string }> {
         const developer = new DeveloperAgent();
 
-        // Get task for context
+        // Get task for context (may be null for proposal-based PRDs)
         const { getTaskById } = await import('../db/index.js');
-        const task = getTaskById(prd.task_id);
+        const task = prd.task_id ? getTaskById(prd.task_id) : undefined;
 
         const result = await developer.execute({
             project,
-            task: task!,
+            task,
             prd,
             run,
             workDir: project.path,

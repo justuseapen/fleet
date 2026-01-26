@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- Generated PRDs awaiting approval
 CREATE TABLE IF NOT EXISTS prds (
     id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id),
+    task_id TEXT REFERENCES tasks(id), -- NULL for proactive proposals
+    proposal_id TEXT REFERENCES proposals(id), -- NULL for task-based PRDs
     project_id TEXT NOT NULL REFERENCES projects(id),
     content TEXT NOT NULL, -- Full PRD markdown
     prd_json TEXT NOT NULL, -- prd.json content
@@ -88,9 +89,36 @@ CREATE TABLE IF NOT EXISTS audits (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Proactive feature proposals from VisionaryAgent
+CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    title TEXT NOT NULL,
+    rationale TEXT,
+    source_context TEXT, -- JSON context that led to proposal
+    status TEXT NOT NULL DEFAULT 'proposed', -- 'proposed', 'approved', 'rejected', 'converted'
+    converted_task_id TEXT REFERENCES tasks(id), -- If converted to a task
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Codebase analysis cache
+CREATE TABLE IF NOT EXISTS codebase_analysis (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    analysis_data TEXT NOT NULL, -- JSON CodebaseAnalysis
+    analyzed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    UNIQUE(project_id)
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_prds_status ON prds(status);
+CREATE INDEX IF NOT EXISTS idx_prds_proposal ON prds(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_work_log_created ON work_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_codebase_analysis_project ON codebase_analysis(project_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_project ON proposals(project_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);

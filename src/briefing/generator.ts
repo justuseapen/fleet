@@ -77,10 +77,10 @@ function gatherBriefingData(): BriefingData {
     const pendingPrds = getPrdsByStatus('pending');
     const pendingApprovals = pendingPrds.map(prd => {
         const project = getProjectById(prd.project_id);
-        const task = getTaskById(prd.task_id);
+        const task = prd.task_id ? getTaskById(prd.task_id) : null;
         return {
             project: project?.name || 'Unknown',
-            task: task?.title || 'Unknown task',
+            task: task?.title || (prd.proposal_id ? 'Proactive Proposal' : 'Unknown task'),
             riskLevel: getRiskLevel(prd.risk_score),
             riskScore: prd.risk_score,
         };

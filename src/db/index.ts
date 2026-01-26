@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -41,7 +42,7 @@ export function closeDb(): void {
 
 // Helper to generate UUIDs
 export function generateId(): string {
-    return crypto.randomUUID();
+    return randomUUID();
 }
 
 // Type-safe query helpers
@@ -78,7 +79,8 @@ export interface Task {
 
 export interface Prd {
     id: string;
-    task_id: string;
+    task_id: string | null;
+    proposal_id: string | null;
     project_id: string;
     content: string;
     prd_json: string;
@@ -124,6 +126,18 @@ export interface Audit {
     recommendations: string | null;
     scope_creep_detected: number;
     created_at: string;
+}
+
+export interface Proposal {
+    id: string;
+    project_id: string;
+    title: string;
+    rationale: string | null;
+    source_context: string | null;
+    status: 'proposed' | 'approved' | 'rejected' | 'converted';
+    converted_task_id: string | null;
+    created_at: string;
+    updated_at: string;
 }
 
 // Project queries
@@ -225,11 +239,12 @@ export function getPrdByTaskId(taskId: string): Prd | undefined {
 
 export function insertPrd(prd: Omit<Prd, 'created_at' | 'updated_at'>): void {
     getDb().prepare(`
-        INSERT INTO prds (id, task_id, project_id, content, prd_json, risk_score, risk_factors, status, approved_at, approved_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO prds (id, task_id, proposal_id, project_id, content, prd_json, risk_score, risk_factors, status, approved_at, approved_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         prd.id,
         prd.task_id,
+        prd.proposal_id,
         prd.project_id,
         prd.content,
         prd.prd_json,
@@ -344,4 +359,80 @@ export function getLatestAudit(projectId?: string): Audit | undefined {
         return getDb().prepare('SELECT * FROM audits WHERE project_id = ? ORDER BY created_at DESC LIMIT 1').get(projectId) as Audit | undefined;
     }
     return getDb().prepare('SELECT * FROM audits WHERE project_id IS NULL ORDER BY created_at DESC LIMIT 1').get() as Audit | undefined;
+}
+
+// Proposal queries
+export function insertProposal(proposal: Omit<Proposal, 'created_at' | 'updated_at'>): void {
+    getDb().prepare(`
+        INSERT INTO proposals (id, project_id, title, rationale, source_context, status, converted_task_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        proposal.id,
+        proposal.project_id,
+        proposal.title,
+        proposal.rationale,
+        proposal.source_context,
+        proposal.status,
+        proposal.converted_task_id
+    );
+}
+
+export function getProposalsByProject(projectId: string): Proposal[] {
+    return getDb().prepare('SELECT * FROM proposals WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as Proposal[];
+}
+
+export function getProposalsByStatus(status: Proposal['status']): Proposal[] {
+    return getDb().prepare('SELECT * FROM proposals WHERE status = ? ORDER BY created_at DESC').all(status) as Proposal[];
+}
+
+export function getProposalById(id: string): Proposal | undefined {
+    return getDb().prepare('SELECT * FROM proposals WHERE id = ?').get(id) as Proposal | undefined;
+}
+
+export function updateProposalStatus(id: string, status: Proposal['status'], convertedTaskId?: string): void {
+    if (status === 'converted' && convertedTaskId) {
+        getDb().prepare('UPDATE proposals SET status = ?, converted_task_id = ?, updated_at = datetime(\'now\') WHERE id = ?')
+            .run(status, convertedTaskId, id);
+    } else {
+        getDb().prepare('UPDATE proposals SET status = ?, updated_at = datetime(\'now\') WHERE id = ?').run(status, id);
+    }
+}
+
+// Cleanup queries
+export function getStaleRuns(staleThresholdMinutes = 60): Run[] {
+    return getDb().prepare(`
+        SELECT * FROM runs
+        WHERE status = 'running'
+          AND datetime(started_at, '+' || ? || ' minutes') < datetime('now')
+    `).all(staleThresholdMinutes) as Run[];
+}
+
+export function markStaleRunsAsFailed(staleThresholdMinutes = 60): number {
+    const result = getDb().prepare(`
+        UPDATE runs
+        SET status = 'failed',
+            error = 'Marked as failed: stale run with no progress (threshold: ' || ? || ' minutes)',
+            completed_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE status = 'running'
+          AND datetime(started_at, '+' || ? || ' minutes') < datetime('now')
+    `).run(staleThresholdMinutes, staleThresholdMinutes);
+    return result.changes;
+}
+
+export function getOldFailedRuns(olderThanDays = 7): Run[] {
+    return getDb().prepare(`
+        SELECT * FROM runs
+        WHERE status = 'failed'
+          AND datetime(created_at, '+' || ? || ' days') < datetime('now')
+    `).all(olderThanDays) as Run[];
+}
+
+export function clearOldFailedRuns(olderThanDays = 7): number {
+    const result = getDb().prepare(`
+        DELETE FROM runs
+        WHERE status = 'failed'
+          AND datetime(created_at, '+' || ? || ' days') < datetime('now')
+    `).run(olderThanDays);
+    return result.changes;
 }

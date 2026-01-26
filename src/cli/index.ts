@@ -8,6 +8,9 @@ import { runCommand } from './commands/run.js';
 import { projectsCommand } from './commands/projects.js';
 import { syncCommand } from './commands/sync.js';
 import { strategicCommand } from './commands/strategic.js';
+import { analyzeCommand } from './commands/analyze.js';
+import { cleanupCommand } from './commands/cleanup.js';
+import { ideateCommand } from './commands/ideate.js';
 import { loadGlobalConfig, saveGlobalConfig } from './config.js';
 import { closeDb } from '../db/index.js';
 
@@ -25,6 +28,9 @@ program.addCommand(runCommand);
 program.addCommand(projectsCommand);
 program.addCommand(syncCommand);
 program.addCommand(strategicCommand);
+program.addCommand(analyzeCommand);
+program.addCommand(cleanupCommand);
+program.addCommand(ideateCommand);
 
 // Config command
 program

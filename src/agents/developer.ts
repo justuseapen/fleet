@@ -71,7 +71,9 @@ export class DeveloperAgent implements Agent {
             });
 
             if (success) {
-                updateTaskStatus(context.task!.id, 'completed');
+                if (context.task) {
+                    updateTaskStatus(context.task.id, 'completed');
+                }
                 updatePrdStatus(prd.id, 'executed');
 
                 insertWorkLog({
@@ -83,7 +85,9 @@ export class DeveloperAgent implements Agent {
                     details: JSON.stringify({ iterations: result.iterations }),
                 });
             } else {
-                updateTaskStatus(context.task!.id, 'failed');
+                if (context.task) {
+                    updateTaskStatus(context.task.id, 'failed');
+                }
 
                 insertWorkLog({
                     id: generateId(),
@@ -146,39 +150,94 @@ export class DeveloperAgent implements Agent {
         }
     }
 
-    private async createBranch(workDir: string, branchName: string): Promise<void> {
-        return new Promise((resolve, reject) => {
-            const git = spawn('git', ['checkout', '-b', branchName], {
+    /**
+     * Run a git command and return { success, stdout, stderr }
+     */
+    private runGit(workDir: string, args: string[]): Promise<{ success: boolean; stdout: string; stderr: string }> {
+        return new Promise((resolve) => {
+            const git = spawn('git', args, {
                 cwd: workDir,
                 stdio: 'pipe',
             });
 
+            let stdout = '';
             let stderr = '';
-            git.stderr.on('data', (data) => {
+
+            git.stdout?.on('data', (data) => {
+                stdout += data.toString();
+            });
+
+            git.stderr?.on('data', (data) => {
                 stderr += data.toString();
             });
 
+            git.on('error', (error) => {
+                resolve({ success: false, stdout, stderr: error.message });
+            });
+
             git.on('close', (code) => {
-                if (code === 0) {
-                    resolve();
-                } else if (stderr.includes('already exists')) {
-                    // Branch exists, just check it out
-                    const checkout = spawn('git', ['checkout', branchName], {
-                        cwd: workDir,
-                        stdio: 'pipe',
-                    });
-                    checkout.on('close', (checkoutCode) => {
-                        if (checkoutCode === 0) {
-                            resolve();
-                        } else {
-                            reject(new Error(`Failed to checkout branch: ${branchName}`));
-                        }
-                    });
-                } else {
-                    reject(new Error(`Failed to create branch: ${stderr}`));
-                }
+                resolve({ success: code === 0, stdout, stderr });
             });
         });
+    }
+
+    /**
+     * Check if there are uncommitted changes in the working directory
+     */
+    private async hasUncommittedChanges(workDir: string): Promise<boolean> {
+        const result = await this.runGit(workDir, ['status', '--porcelain']);
+        return result.stdout.trim().length > 0;
+    }
+
+    private async createBranch(workDir: string, branchName: string): Promise<void> {
+        // Check for uncommitted changes and stash if needed
+        const hasChanges = await this.hasUncommittedChanges(workDir);
+        let stashed = false;
+
+        if (hasChanges) {
+            const stashResult = await this.runGit(workDir, ['stash', 'push', '-m', `Fleet auto-stash for ${branchName}`]);
+            if (!stashResult.success) {
+                throw new Error(`Failed to stash uncommitted changes: ${stashResult.stderr}`);
+            }
+            stashed = true;
+        }
+
+        try {
+            // Try to create the branch
+            const createResult = await this.runGit(workDir, ['checkout', '-b', branchName]);
+
+            if (createResult.success) {
+                return;
+            }
+
+            // Branch might already exist locally or on remote
+            if (createResult.stderr.includes('already exists')) {
+                // Try checking out existing local branch
+                const checkoutResult = await this.runGit(workDir, ['checkout', branchName]);
+                if (checkoutResult.success) {
+                    return;
+                }
+            }
+
+            // Try fetching from remote and checking out
+            await this.runGit(workDir, ['fetch', 'origin', branchName]);
+            const checkoutRemoteResult = await this.runGit(workDir, ['checkout', branchName]);
+            if (checkoutRemoteResult.success) {
+                return;
+            }
+
+            // If all else fails, provide actionable error message
+            throw new Error(
+                `Failed to checkout branch '${branchName}'. ` +
+                `Error: ${createResult.stderr.trim()}. ` +
+                `Try running 'git checkout ${branchName}' manually to diagnose.`
+            );
+        } finally {
+            // Restore stashed changes if we stashed them
+            if (stashed) {
+                await this.runGit(workDir, ['stash', 'pop']);
+            }
+        }
     }
 
     private async spawnRalph(
@@ -187,14 +246,28 @@ export class DeveloperAgent implements Agent {
         maxIterations: number
     ): Promise<{ exitCode: number; iterations: number; error?: string }> {
         return new Promise((resolve) => {
-            // Look for ralph.sh in the project or use global
-            const ralphScript = existsSync(join(workDir, 'ralph.sh'))
-                ? join(workDir, 'ralph.sh')
-                : existsSync(join(workDir, 'scripts', 'ralph', 'ralph.sh'))
-                    ? join(workDir, 'scripts', 'ralph', 'ralph.sh')
-                    : 'ralph'; // Assume it's in PATH
+            // Look for ralph.sh in known locations
+            const searchPaths = [
+                join(workDir, 'ralph.sh'),
+                join(workDir, 'scripts', 'ralph', 'ralph.sh'),
+                join(workDir, 'scripts', 'ralph.sh'),
+            ];
 
-            const ralph = spawn(ralphScript, ['--tool', tool, String(maxIterations)], {
+            const ralphScript = searchPaths.find((p) => existsSync(p));
+
+            if (!ralphScript) {
+                resolve({
+                    exitCode: 1,
+                    iterations: 0,
+                    error: `ralph.sh not found. Searched paths:\n${searchPaths.map((p) => `  - ${p}`).join('\n')}\n\nCreate ralph.sh in your project root or scripts/ directory.`,
+                });
+                return;
+            }
+
+            // Use 'bash' to execute the script - avoids shebang/permission issues
+            const args = [ralphScript, '--tool', tool, String(maxIterations)];
+
+            const ralph = spawn('bash', args, {
                 cwd: workDir,
                 stdio: ['inherit', 'pipe', 'pipe'],
                 env: {
@@ -240,7 +313,7 @@ export class DeveloperAgent implements Agent {
                 resolve({
                     exitCode: 1,
                     iterations,
-                    error: error.message,
+                    error: `Failed to spawn bash: ${error.message}`,
                 });
             });
         });
