@@ -45,3 +45,25 @@ Initialized by Fleet
   - When feature is already implemented, validate and document rather than re-implement
   - Check all related files before assuming work is needed
 ---
+
+## 2026-01-28T12:33 - US-006
+- Added comprehensive unit tests for briefing generator
+- **Files created:**
+  - src/briefing/generator.test.ts (11 new tests)
+- **Tests added:**
+  - BriefingData structure validation
+  - JSON serializability test
+  - Structure tests for all data arrays (completedOvernight, pendingApprovals, blockedOrFailed, runningNow, suggestedPriorities)
+  - Type validation for all fields
+  - Suggested priorities limit test (max 5)
+  - Terminal output format tests
+  - Distinction test between JSON and terminal output
+- **Verification:**
+  - ✓ All tests pass (45 total, 11 new)
+  - ✓ Typecheck passes
+- **Learnings for future iterations:**
+  - Use describe/it blocks for organizing tests
+  - Test both structure and content
+  - Verify JSON serializability explicitly
+  - Use toHaveProperty() for structure checks
+---
