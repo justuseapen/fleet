@@ -98,9 +98,9 @@ export const approveCommand = new Command('approve')
             console.log('');
 
             // Show risk breakdown
-            console.log(chalk.gray('Risk Breakdown:'));
+            console.log(chalk.dim('Risk Breakdown:'));
             for (const [factor, data] of Object.entries(item.riskBreakdown)) {
-                console.log(chalk.gray(`  ${factor}: ${data.score} - ${data.description}`));
+                console.log(`  ${factor}: ${data.score} - ${data.description}`);
             }
             console.log('');
 
@@ -126,16 +126,16 @@ export const approveCommand = new Command('approve')
 
             // Show PRD summary (first few lines)
             const prdLines = item.prd.content.split('\n').slice(0, 10);
-            console.log(chalk.gray('PRD Preview:'));
-            console.log(chalk.gray(prdLines.join('\n')));
+            console.log(chalk.dim('PRD Preview:'));
+            console.log(prdLines.join('\n'));
             if (item.prd.content.split('\n').length > 10) {
-                console.log(chalk.gray('...'));
+                console.log('...');
             }
             console.log('');
 
             // Parse user stories count
             const prdJson = JSON.parse(item.prd.prd_json);
-            console.log(chalk.gray(`User Stories: ${prdJson.userStories?.length || 0}`));
+            console.log(`User Stories: ${prdJson.userStories?.length || 0}`);
             console.log('');
 
             // Prompt for action
