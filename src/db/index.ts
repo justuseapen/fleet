@@ -38,6 +38,16 @@ function initializeSchema(database: Database.Database): void {
     } catch {
         // Column already exists — ignore
     }
+    try {
+        database.exec('ALTER TABLE runs ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0');
+    } catch {
+        // Column already exists — ignore
+    }
+    try {
+        database.exec('ALTER TABLE runs ADD COLUMN last_restart_at TEXT');
+    } catch {
+        // Column already exists — ignore
+    }
 }
 
 export function closeDb(): void {
@@ -86,8 +96,8 @@ export interface Task {
 
 export interface Prd {
     id: string;
-    task_id: string | null;
-    proposal_id: string | null;
+    task_id: string | null;  // Now optional for proposal-based PRDs
+    proposal_id: string | null;  // Optional link to proposal
     project_id: string;
     content: string;
     prd_json: string;
@@ -96,6 +106,18 @@ export interface Prd {
     status: 'pending' | 'approved' | 'rejected' | 'executed';
     approved_at: string | null;
     approved_by: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface Proposal {
+    id: string;
+    project_id: string;
+    title: string;
+    rationale: string;
+    source_context: string | null;
+    status: 'proposed' | 'approved' | 'rejected' | 'converted';
+    converted_task_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -113,6 +135,8 @@ export interface Run {
     error: string | null;
     pr_url: string | null;
     worktree_path: string | null;
+    restart_count: number;
+    last_restart_at: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -136,16 +160,17 @@ export interface Audit {
     created_at: string;
 }
 
-export interface Proposal {
+export interface HealthAlert {
     id: string;
+    run_id: string | null;
     project_id: string;
-    title: string;
-    rationale: string | null;
-    source_context: string | null;
-    status: 'proposed' | 'approved' | 'rejected' | 'converted';
-    converted_task_id: string | null;
+    alert_type: 'stuck' | 'crashed' | 'slow_progress' | 'error';
+    severity: 'warning' | 'error' | 'critical';
+    message: string;
+    context: string | null;
+    acknowledged: number;
+    acknowledged_at: string | null;
     created_at: string;
-    updated_at: string;
 }
 
 // Agent collaboration types
@@ -293,6 +318,10 @@ export function getPrdByTaskId(taskId: string): Prd | undefined {
     return getDb().prepare('SELECT * FROM prds WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(taskId) as Prd | undefined;
 }
 
+export function getPrdByProposalId(proposalId: string): Prd | undefined {
+    return getDb().prepare('SELECT * FROM prds WHERE proposal_id = ? ORDER BY created_at DESC LIMIT 1').get(proposalId) as Prd | undefined;
+}
+
 export function insertPrd(prd: Omit<Prd, 'created_at' | 'updated_at'>): void {
     getDb().prepare(`
         INSERT INTO prds (id, task_id, proposal_id, project_id, content, prd_json, risk_score, risk_factors, status, approved_at, approved_by)
@@ -336,8 +365,8 @@ export function getRunsByProject(projectId: string): Run[] {
 
 export function insertRun(run: Omit<Run, 'created_at' | 'updated_at'>): void {
     getDb().prepare(`
-        INSERT INTO runs (id, prd_id, project_id, branch, status, iterations_planned, iterations_completed, started_at, completed_at, error, pr_url, worktree_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO runs (id, prd_id, project_id, branch, status, iterations_planned, iterations_completed, started_at, completed_at, error, pr_url, worktree_path, restart_count, last_restart_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         run.id,
         run.prd_id,
@@ -350,11 +379,13 @@ export function insertRun(run: Omit<Run, 'created_at' | 'updated_at'>): void {
         run.completed_at,
         run.error,
         run.pr_url,
-        run.worktree_path
+        run.worktree_path,
+        run.restart_count,
+        run.last_restart_at
     );
 }
 
-export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'iterations_completed' | 'started_at' | 'completed_at' | 'error' | 'pr_url' | 'worktree_path'>>): void {
+export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'iterations_completed' | 'started_at' | 'completed_at' | 'error' | 'pr_url' | 'worktree_path' | 'restart_count' | 'last_restart_at'>>): void {
     const setClauses: string[] = ['updated_at = datetime(\'now\')'];
     const values: (string | number | null)[] = [];
 
@@ -385,6 +416,14 @@ export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'ite
     if (updates.worktree_path !== undefined) {
         setClauses.push('worktree_path = ?');
         values.push(updates.worktree_path);
+    }
+    if (updates.restart_count !== undefined) {
+        setClauses.push('restart_count = ?');
+        values.push(updates.restart_count);
+    }
+    if (updates.last_restart_at !== undefined) {
+        setClauses.push('last_restart_at = ?');
+        values.push(updates.last_restart_at);
     }
 
     values.push(id);
@@ -438,16 +477,16 @@ export function insertProposal(proposal: Omit<Proposal, 'created_at' | 'updated_
     );
 }
 
-export function getProposalsByProject(projectId: string): Proposal[] {
-    return getDb().prepare('SELECT * FROM proposals WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as Proposal[];
+export function getProposalById(id: string): Proposal | undefined {
+    return getDb().prepare('SELECT * FROM proposals WHERE id = ?').get(id) as Proposal | undefined;
 }
 
 export function getProposalsByStatus(status: Proposal['status']): Proposal[] {
     return getDb().prepare('SELECT * FROM proposals WHERE status = ? ORDER BY created_at DESC').all(status) as Proposal[];
 }
 
-export function getProposalById(id: string): Proposal | undefined {
-    return getDb().prepare('SELECT * FROM proposals WHERE id = ?').get(id) as Proposal | undefined;
+export function getProposalsByProject(projectId: string): Proposal[] {
+    return getDb().prepare('SELECT * FROM proposals WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as Proposal[];
 }
 
 export function updateProposalStatus(id: string, status: Proposal['status'], convertedTaskId?: string): void {
@@ -457,6 +496,56 @@ export function updateProposalStatus(id: string, status: Proposal['status'], con
     } else {
         getDb().prepare('UPDATE proposals SET status = ?, updated_at = datetime(\'now\') WHERE id = ?').run(status, id);
     }
+}
+
+export function convertProposalToTask(proposalId: string, taskId: string): void {
+    getDb().prepare(`
+        UPDATE proposals
+        SET status = 'converted', converted_task_id = ?, updated_at = datetime('now')
+        WHERE id = ?
+    `).run(taskId, proposalId);
+}
+
+// Health alert queries
+export function insertHealthAlert(alert: Omit<HealthAlert, 'created_at'>): void {
+    getDb().prepare(`
+        INSERT INTO health_alerts (id, run_id, project_id, alert_type, severity, message, context, acknowledged, acknowledged_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        alert.id,
+        alert.run_id,
+        alert.project_id,
+        alert.alert_type,
+        alert.severity,
+        alert.message,
+        alert.context,
+        alert.acknowledged,
+        alert.acknowledged_at
+    );
+}
+
+export function getUnacknowledgedAlerts(): HealthAlert[] {
+    return getDb().prepare('SELECT * FROM health_alerts WHERE acknowledged = 0 ORDER BY created_at DESC').all() as HealthAlert[];
+}
+
+export function getAlertsByRun(runId: string): HealthAlert[] {
+    return getDb().prepare('SELECT * FROM health_alerts WHERE run_id = ? ORDER BY created_at DESC').all(runId) as HealthAlert[];
+}
+
+export function getRecentAlerts(limit = 50): HealthAlert[] {
+    return getDb().prepare('SELECT * FROM health_alerts ORDER BY created_at DESC LIMIT ?').all(limit) as HealthAlert[];
+}
+
+export function acknowledgeAlert(id: string): void {
+    getDb().prepare(`
+        UPDATE health_alerts
+        SET acknowledged = 1, acknowledged_at = datetime('now')
+        WHERE id = ?
+    `).run(id);
+}
+
+export function getAlertById(id: string): HealthAlert | undefined {
+    return getDb().prepare('SELECT * FROM health_alerts WHERE id = ?').get(id) as HealthAlert | undefined;
 }
 
 // Cleanup queries

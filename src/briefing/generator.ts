@@ -7,10 +7,13 @@ import {
     getProjectById,
     getTaskById,
     getTasksByProject,
+    getProposalsByStatus,
     type WorkLog,
     type Prd,
     type Run,
+    type Proposal,
 } from '../db/index.js';
+import { getProjectsNeedingIdeas, type BacklogHealth } from '../orchestrator/backlog-analyzer.js';
 
 interface BriefingData {
     completedOvernight: Array<{
@@ -38,6 +41,12 @@ interface BriefingData {
         project: string;
         task: string;
         reason: string;
+    }>;
+    lowBacklogProjects: BacklogHealth[];
+    pendingProposals: Array<{
+        project: string;
+        title: string;
+        id: string;
     }>;
 }
 
@@ -73,8 +82,8 @@ function gatherBriefingData(): BriefingData {
             };
         });
 
-    // Pending approvals
-    const pendingPrds = getPrdsByStatus('pending');
+    // Pending approvals (only task-based PRDs, not proposal-based)
+    const pendingPrds = getPrdsByStatus('pending').filter(prd => prd.task_id !== null);
     const pendingApprovals = pendingPrds.map(prd => {
         const project = getProjectById(prd.project_id);
         const task = prd.task_id ? getTaskById(prd.task_id) : null;
@@ -141,12 +150,28 @@ function gatherBriefingData(): BriefingData {
         }
     }
 
+    // Low backlog projects
+    const lowBacklogProjects = getProjectsNeedingIdeas(3);
+
+    // Pending proposals
+    const proposedItems = getProposalsByStatus('proposed');
+    const pendingProposals = proposedItems.map(p => {
+        const project = getProjectById(p.project_id);
+        return {
+            project: project?.name || 'Unknown',
+            title: p.title,
+            id: p.id,
+        };
+    });
+
     return {
         completedOvernight,
         pendingApprovals,
         blockedOrFailed,
         runningNow,
         suggestedPriorities: suggestedPriorities.slice(0, 5),
+        lowBacklogProjects,
+        pendingProposals,
     };
 }
 
@@ -224,6 +249,27 @@ function formatBriefing(data: BriefingData): string {
             lines.push(chalk.magenta(`  ${i + 1}. [${item.project}] ${item.task}`));
             lines.push(chalk.gray(`     ${item.reason}`));
         });
+        lines.push('');
+    }
+
+    // Low backlog warnings
+    if (data.lowBacklogProjects.length > 0) {
+        lines.push(chalk.yellow('⚠ Low Backlog Warning:'));
+        for (const item of data.lowBacklogProjects) {
+            const countText = item.isEmpty ? 'Empty backlog' : `Only ${item.count} task(s) in backlog`;
+            lines.push(chalk.yellow(`  ! ${item.projectName}: ${countText}`));
+        }
+        lines.push(chalk.gray('    Run `fleet ideate -p <project>` to generate ideas'));
+        lines.push('');
+    }
+
+    // Pending proposals
+    if (data.pendingProposals.length > 0) {
+        lines.push(chalk.blue(`💡 Pending Proposals (${data.pendingProposals.length}):`));
+        for (const item of data.pendingProposals) {
+            lines.push(chalk.blue(`  [AI] ${item.project}: ${item.title}`));
+        }
+        lines.push(chalk.gray('    Run `fleet approve --proposals` to review'));
         lines.push('');
     }
 

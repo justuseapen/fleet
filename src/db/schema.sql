@@ -34,11 +34,24 @@ CREATE TABLE IF NOT EXISTS tasks (
     UNIQUE(project_id, external_id)
 );
 
+-- Proactive feature proposals from VisionaryAgent
+CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    title TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    source_context TEXT,  -- JSON: signals that triggered this
+    status TEXT NOT NULL DEFAULT 'proposed',  -- 'proposed', 'approved', 'rejected', 'converted'
+    converted_task_id TEXT REFERENCES tasks(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Generated PRDs awaiting approval
 CREATE TABLE IF NOT EXISTS prds (
     id TEXT PRIMARY KEY,
-    task_id TEXT REFERENCES tasks(id), -- NULL for proactive proposals
-    proposal_id TEXT REFERENCES proposals(id), -- NULL for task-based PRDs
+    task_id TEXT REFERENCES tasks(id),  -- Now optional (can be null for proposal-based PRDs)
+    proposal_id TEXT REFERENCES proposals(id),  -- Optional link to proposal
     project_id TEXT NOT NULL REFERENCES projects(id),
     content TEXT NOT NULL, -- Full PRD markdown
     prd_json TEXT NOT NULL, -- prd.json content
@@ -65,6 +78,8 @@ CREATE TABLE IF NOT EXISTS runs (
     error TEXT,
     pr_url TEXT,
     worktree_path TEXT,
+    restart_count INTEGER NOT NULL DEFAULT 0,
+    last_restart_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -88,19 +103,6 @@ CREATE TABLE IF NOT EXISTS audits (
     recommendations TEXT, -- JSON array
     scope_creep_detected INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Proactive feature proposals from VisionaryAgent
-CREATE TABLE IF NOT EXISTS proposals (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id),
-    title TEXT NOT NULL,
-    rationale TEXT,
-    source_context TEXT, -- JSON context that led to proposal
-    status TEXT NOT NULL DEFAULT 'proposed', -- 'proposed', 'approved', 'rejected', 'converted'
-    converted_task_id TEXT REFERENCES tasks(id), -- If converted to a task
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Codebase analysis cache
@@ -164,6 +166,20 @@ CREATE TABLE IF NOT EXISTS agent_validations (
     completed_at TEXT
 );
 
+-- Health alerts for monitoring
+CREATE TABLE IF NOT EXISTS health_alerts (
+    id TEXT PRIMARY KEY,
+    run_id TEXT REFERENCES runs(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    alert_type TEXT NOT NULL, -- 'stuck', 'crashed', 'slow_progress', 'error'
+    severity TEXT NOT NULL, -- 'warning', 'error', 'critical'
+    message TEXT NOT NULL,
+    context TEXT, -- JSON additional context
+    acknowledged INTEGER NOT NULL DEFAULT 0,
+    acknowledged_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -186,3 +202,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_handoffs_to ON agent_handoffs(to_agent, sta
 CREATE INDEX IF NOT EXISTS idx_agent_validations_project ON agent_validations(project_id);
 CREATE INDEX IF NOT EXISTS idx_agent_validations_status ON agent_validations(status);
 CREATE INDEX IF NOT EXISTS idx_agent_validations_prd ON agent_validations(prd_id);
+
+-- Indexes for health monitoring
+CREATE INDEX IF NOT EXISTS idx_health_alerts_run ON health_alerts(run_id);
+CREATE INDEX IF NOT EXISTS idx_health_alerts_created ON health_alerts(created_at);

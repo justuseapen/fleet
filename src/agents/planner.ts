@@ -130,7 +130,7 @@ export class PlannerAgent implements Agent {
             insertPrd({
                 id: prdId,
                 task_id: task.id,
-                proposal_id: null,
+                proposal_id: null, // Task-based PRD, not proposal-based
                 project_id: project.id,
                 content: prdContent,
                 prd_json: JSON.stringify(prdJson),

@@ -49,15 +49,17 @@ export class Scheduler {
     async scheduleApproved(): Promise<ScheduledRun[]> {
         const approvedPrds = getPrdsByStatus('approved');
         const scheduled: ScheduledRun[] = [];
+        const scheduledProjects = new Set<string>();
 
         for (const prd of approvedPrds) {
             // Check global concurrency
-            if (this.runningProjects.size >= this.maxGlobalConcurrency) {
+            if (this.runningProjects.size + scheduledProjects.size >= this.maxGlobalConcurrency) {
                 break;
             }
 
-            // Check if project already running
-            if (this.runningProjects.has(prd.project_id)) {
+            // Check if project already running or already scheduled in this batch
+            // (can't run multiple PRDs on same project - they'd conflict on git branches)
+            if (this.runningProjects.has(prd.project_id) || scheduledProjects.has(prd.project_id)) {
                 continue;
             }
 
@@ -87,12 +89,15 @@ export class Scheduler {
                 error: null,
                 pr_url: null,
                 worktree_path: null,
+                restart_count: 0,
+                last_restart_at: null,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             };
 
             insertRun(run);
             scheduled.push({ project, prd, run });
+            scheduledProjects.add(project.id);
         }
 
         return scheduled;
