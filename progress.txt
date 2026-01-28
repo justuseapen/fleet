@@ -1,4 +1,33 @@
 # Progress Log
 
+## Codebase Patterns
+- Use Commander.js `.option()` for CLI flags (e.g., `--json`)
+- Separate data gathering from formatting (e.g., `getBriefingData()` vs `formatBriefing()`)
+- Use chalk for terminal colors, but never in JSON output
+- TypeScript interfaces define data structures (e.g., `BriefingData`)
+- Tests use Vitest framework (`npm run test:run`)
+
 ## 2026-01-28T17:23:42.428Z
 Initialized by Fleet
+
+## 2026-01-28T12:27 - US-001
+- Analyzed existing status command structure
+- **Files examined:**
+  - src/cli/commands/status.ts (status command with --json flag)
+  - src/briefing/generator.ts (BriefingData interface and data generation)
+- **Discovery:** Feature already implemented!
+  - --json flag exists at status.ts:6
+  - BriefingData interface properly typed (lines 15-42)
+  - getBriefingData() returns structured data
+  - formatBriefing() preserves terminal output
+- **Verification:**
+  - ✓ Typecheck passes
+  - ✓ All tests pass (34 tests)
+  - ✓ JSON output works: `./bin/fleet status --json`
+  - ✓ Terminal output preserved: `./bin/fleet status`
+- **Learnings for future iterations:**
+  - This codebase uses Commander.js for CLI parsing
+  - Pattern: Separate data functions from formatting functions
+  - BriefingData interface includes: completedOvernight, pendingApprovals, blockedOrFailed, runningNow, suggestedPriorities
+  - Don't assume functionality is missing - check implementation first
+---
