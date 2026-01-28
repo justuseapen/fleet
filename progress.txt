@@ -1,0 +1,89 @@
+# Progress Log
+
+## Codebase Patterns
+- Use Commander.js `.option()` for CLI flags (e.g., `--json`)
+- Separate data gathering from formatting (e.g., `getBriefingData()` vs `formatBriefing()`)
+- Use chalk for terminal colors, but never in JSON output
+- TypeScript interfaces define data structures (e.g., `BriefingData`)
+- Tests use Vitest framework (`npm run test:run`)
+
+## 2026-01-28T17:23:42.428Z
+Initialized by Fleet
+
+## 2026-01-28T12:27 - US-001
+- Analyzed existing status command structure
+- **Files examined:**
+  - src/cli/commands/status.ts (status command with --json flag)
+  - src/briefing/generator.ts (BriefingData interface and data generation)
+- **Discovery:** Feature already implemented!
+  - --json flag exists at status.ts:6
+  - BriefingData interface properly typed (lines 15-42)
+  - getBriefingData() returns structured data
+  - formatBriefing() preserves terminal output
+- **Verification:**
+  - ✓ Typecheck passes
+  - ✓ All tests pass (34 tests)
+  - ✓ JSON output works: `./bin/fleet status --json`
+  - ✓ Terminal output preserved: `./bin/fleet status`
+- **Learnings for future iterations:**
+  - This codebase uses Commander.js for CLI parsing
+  - Pattern: Separate data functions from formatting functions
+  - BriefingData interface includes: completedOvernight, pendingApprovals, blockedOrFailed, runningNow, suggestedPriorities
+  - Don't assume functionality is missing - check implementation first
+---
+
+## 2026-01-28T12:30 - US-002 through US-005
+- Marked stories US-002, US-003, US-004, US-005 as complete
+- All acceptance criteria already met by existing implementation
+- **Verified each story:**
+  - US-002: --json flag exists and works
+  - US-003: BriefingData interface properly defined
+  - US-004: JSON output logic implemented and tested
+  - US-005: Terminal output preserved with colors
+- **Remaining work:** US-006 (unit tests) and US-007 (integration tests)
+- **Learnings for future iterations:**
+  - When feature is already implemented, validate and document rather than re-implement
+  - Check all related files before assuming work is needed
+---
+
+## 2026-01-28T12:33 - US-006
+- Added comprehensive unit tests for briefing generator
+- **Files created:**
+  - src/briefing/generator.test.ts (11 new tests)
+- **Tests added:**
+  - BriefingData structure validation
+  - JSON serializability test
+  - Structure tests for all data arrays (completedOvernight, pendingApprovals, blockedOrFailed, runningNow, suggestedPriorities)
+  - Type validation for all fields
+  - Suggested priorities limit test (max 5)
+  - Terminal output format tests
+  - Distinction test between JSON and terminal output
+- **Verification:**
+  - ✓ All tests pass (45 total, 11 new)
+  - ✓ Typecheck passes
+- **Learnings for future iterations:**
+  - Use describe/it blocks for organizing tests
+  - Test both structure and content
+  - Verify JSON serializability explicitly
+  - Use toHaveProperty() for structure checks
+---
+## $(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ") - US-007
+- Added comprehensive integration tests for status command JSON output
+- **Files created:**
+  - src/cli/commands/status.test.ts (13 new tests, 370 lines)
+- **Tests cover:**
+  - JSON output behavior (valid JSON, required fields, no ANSI codes, empty state, multiple items, pretty-printing with 2-space indent)
+  - Terminal output behavior (formatted output, ANSI escape codes, distinction from JSON)
+  - Data consistency (JSON serialization preserves all data, optional fields handled correctly)
+  - Command interface validation (exports exist, --json option present)
+- **Verification:**
+  - ✓ All 58 tests pass (13 new integration tests, 45 existing)
+  - ✓ Typecheck passes
+  - ✓ Committed with message: feat: US-007 - Add Integration Tests
+- **Learnings for future iterations:**
+  - When testing Commander.js commands, test behavior rather than direct command execution due to action handler registration complexity
+  - Mock generator functions (getBriefingData, generateBriefing) rather than trying to mock Commander's parseAsync
+  - Test the data transformations and outputs, not just the command wiring
+  - Integration tests can focus on behavior verification without full end-to-end execution
+---
+

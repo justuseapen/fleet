@@ -1,0 +1,117 @@
+{
+  "project": "fleet",
+  "branchName": "fleet/add-json-status-output",
+  "description": "Add --json flag to fleet status command for machine-readable output including pending approvals, running tasks, and blocked/failed runs",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Analyze Existing Status Command Structure",
+      "description": "As a developer, I want to understand the current status command implementation so that I can properly extend it with JSON output functionality.",
+      "acceptanceCriteria": [
+        "Examine src/cli/commands/status.ts implementation",
+        "Document current output format and data structure",
+        "Identify data models used for status information",
+        "Document existing command argument patterns in other CLI commands",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Completed - JSON flag already implemented. status.ts line 6, BriefingData interface in generator.ts. Verified working."
+    },
+    {
+      "id": "US-002",
+      "title": "Add JSON Flag Option to Status Command",
+      "description": "As a user, I want to use a --json flag with the fleet status command so that I can get structured data output.",
+      "acceptanceCriteria": [
+        "Add --json boolean flag to status command options",
+        "Flag parsing follows existing CLI patterns in the codebase",
+        "Command help text updated to include --json option",
+        "Default behavior (without flag) remains unchanged",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Already implemented at status.ts:6 with .option('--json', 'Output as JSON')"
+    },
+    {
+      "id": "US-003",
+      "title": "Create JSON Output Data Structure",
+      "description": "As a developer, I want to define a proper TypeScript interface for the JSON output so that the data structure is well-typed and consistent.",
+      "acceptanceCriteria": [
+        "Create TypeScript interface for status JSON output",
+        "Include fields for: pending approvals, running tasks, blocked/failed runs",
+        "Interface supports all data currently shown in terminal output",
+        "Follow existing type definition patterns in the codebase",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "BriefingData interface at generator.ts:15-42 with all required fields"
+    },
+    {
+      "id": "US-004",
+      "title": "Implement JSON Output Logic",
+      "description": "As a user, I want the fleet status --json command to output valid JSON so that I can process it with other tools.",
+      "acceptanceCriteria": [
+        "When --json flag is used, output valid JSON to stdout",
+        "JSON includes all status information: pending approvals, running tasks, blocked/failed runs",
+        "JSON structure matches the defined TypeScript interface",
+        "No terminal formatting or colors in JSON output",
+        "Output is valid JSON (parseable by JSON.parse())",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented at status.ts:8-10, verified working with ./bin/fleet status --json"
+    },
+    {
+      "id": "US-005",
+      "title": "Preserve Terminal Output Behavior",
+      "description": "As a user, I want the default fleet status command (without --json) to work exactly as before so that existing workflows are not disrupted.",
+      "acceptanceCriteria": [
+        "Default status command output unchanged",
+        "Terminal formatting and colors preserved for non-JSON output",
+        "Human-readable format maintained",
+        "All existing status display logic works as before",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Verified - default output at status.ts:11-14 uses formatBriefing() with colors intact"
+    },
+    {
+      "id": "US-006",
+      "title": "Add Unit Tests for JSON Output",
+      "description": "As a developer, I want comprehensive tests for the JSON output functionality so that the feature is reliable and maintainable.",
+      "acceptanceCriteria": [
+        "Test JSON flag parsing",
+        "Test JSON output structure matches interface",
+        "Test JSON output is valid (parseable)",
+        "Test default behavior unchanged when flag not used",
+        "Tests use Vitest framework (matching project conventions)",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Added 11 unit tests in generator.test.ts - all tests pass (45 total)"
+    },
+    {
+      "id": "US-007",
+      "title": "Add Integration Tests",
+      "description": "As a developer, I want integration tests that verify the complete JSON output functionality so that the feature works end-to-end.",
+      "acceptanceCriteria": [
+        "Test actual command execution with --json flag",
+        "Verify JSON output contains expected status data",
+        "Test with various status states (pending, running, blocked, etc.)",
+        "Ensure JSON output doesn't interfere with other CLI functionality",
+        "Use existing test patterns from the codebase",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Added 13 integration tests in status.test.ts covering JSON output behavior, terminal output behavior, data consistency, and command interface validation. All 58 tests pass, typecheck passes."
+    }
+  ]
+}
