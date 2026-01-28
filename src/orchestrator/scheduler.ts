@@ -5,10 +5,12 @@ import {
     getPrdsByStatus,
     getProjectById,
     insertRun,
+    updateRun,
     generateId,
 } from '../db/index.js';
 import type { ExecutionConfig } from '../types.js';
 import { DeveloperAgent } from '../agents/developer.js';
+import { createWorktree, removeWorktree } from '../git/worktree.js';
 
 interface ScheduledRun {
     project: Project;
@@ -84,6 +86,7 @@ export class Scheduler {
                 completed_at: null,
                 error: null,
                 pr_url: null,
+                worktree_path: null,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             };
@@ -131,18 +134,39 @@ export class Scheduler {
         const { getTaskById } = await import('../db/index.js');
         const task = prd.task_id ? getTaskById(prd.task_id) : undefined;
 
-        const result = await developer.execute({
-            project,
-            task,
-            prd,
-            run,
-            workDir: project.path,
-        });
+        // Create an isolated worktree for this run
+        const worktreeInfo = await createWorktree(
+            project.path,
+            project.id,
+            run.id,
+            run.branch
+        );
 
-        return {
-            success: result.success,
-            error: result.error,
-        };
+        // Record worktree path on the run for crash recovery
+        updateRun(run.id, { worktree_path: worktreeInfo.path });
+
+        try {
+            const result = await developer.execute({
+                project,
+                task,
+                prd,
+                run,
+                workDir: worktreeInfo.path,
+            });
+
+            return {
+                success: result.success,
+                error: result.error,
+            };
+        } finally {
+            // Always clean up the worktree after execution
+            try {
+                await removeWorktree(project.path, worktreeInfo.path);
+                updateRun(run.id, { worktree_path: null });
+            } catch {
+                // Best-effort cleanup; orphans handled by `fleet cleanup --worktrees`
+            }
+        }
     }
 
     /**

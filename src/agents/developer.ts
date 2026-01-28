@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import type { Agent, AgentContext, AgentResult } from './base.js';
@@ -35,9 +35,7 @@ export class DeveloperAgent implements Agent {
             // Set up workspace
             await this.setupWorkspace(workDir, prdJson, prd.content);
 
-            // Create branch
             const branchName = prdJson.branchName || `fleet/${run.id}`;
-            await this.createBranch(workDir, branchName);
 
             // Update run status
             updateRun(run.id, {
@@ -147,96 +145,6 @@ export class DeveloperAgent implements Agent {
         const progressPath = join(workDir, 'progress.txt');
         if (!existsSync(progressPath)) {
             writeFileSync(progressPath, `# Progress Log\n\n## ${new Date().toISOString()}\nInitialized by Fleet\n`);
-        }
-    }
-
-    /**
-     * Run a git command and return { success, stdout, stderr }
-     */
-    private runGit(workDir: string, args: string[]): Promise<{ success: boolean; stdout: string; stderr: string }> {
-        return new Promise((resolve) => {
-            const git = spawn('git', args, {
-                cwd: workDir,
-                stdio: 'pipe',
-            });
-
-            let stdout = '';
-            let stderr = '';
-
-            git.stdout?.on('data', (data) => {
-                stdout += data.toString();
-            });
-
-            git.stderr?.on('data', (data) => {
-                stderr += data.toString();
-            });
-
-            git.on('error', (error) => {
-                resolve({ success: false, stdout, stderr: error.message });
-            });
-
-            git.on('close', (code) => {
-                resolve({ success: code === 0, stdout, stderr });
-            });
-        });
-    }
-
-    /**
-     * Check if there are uncommitted changes in the working directory
-     */
-    private async hasUncommittedChanges(workDir: string): Promise<boolean> {
-        const result = await this.runGit(workDir, ['status', '--porcelain']);
-        return result.stdout.trim().length > 0;
-    }
-
-    private async createBranch(workDir: string, branchName: string): Promise<void> {
-        // Check for uncommitted changes and stash if needed
-        const hasChanges = await this.hasUncommittedChanges(workDir);
-        let stashed = false;
-
-        if (hasChanges) {
-            const stashResult = await this.runGit(workDir, ['stash', 'push', '-m', `Fleet auto-stash for ${branchName}`]);
-            if (!stashResult.success) {
-                throw new Error(`Failed to stash uncommitted changes: ${stashResult.stderr}`);
-            }
-            stashed = true;
-        }
-
-        try {
-            // Try to create the branch
-            const createResult = await this.runGit(workDir, ['checkout', '-b', branchName]);
-
-            if (createResult.success) {
-                return;
-            }
-
-            // Branch might already exist locally or on remote
-            if (createResult.stderr.includes('already exists')) {
-                // Try checking out existing local branch
-                const checkoutResult = await this.runGit(workDir, ['checkout', branchName]);
-                if (checkoutResult.success) {
-                    return;
-                }
-            }
-
-            // Try fetching from remote and checking out
-            await this.runGit(workDir, ['fetch', 'origin', branchName]);
-            const checkoutRemoteResult = await this.runGit(workDir, ['checkout', branchName]);
-            if (checkoutRemoteResult.success) {
-                return;
-            }
-
-            // If all else fails, provide actionable error message
-            throw new Error(
-                `Failed to checkout branch '${branchName}'. ` +
-                `Error: ${createResult.stderr.trim()}. ` +
-                `Try running 'git checkout ${branchName}' manually to diagnose.`
-            );
-        } finally {
-            // Restore stashed changes if we stashed them
-            if (stashed) {
-                await this.runGit(workDir, ['stash', 'pop']);
-            }
         }
     }
 

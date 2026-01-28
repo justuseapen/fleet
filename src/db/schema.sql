@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS runs (
     completed_at TEXT,
     error TEXT,
     pr_url TEXT,
+    worktree_path TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -112,6 +113,57 @@ CREATE TABLE IF NOT EXISTS codebase_analysis (
     UNIQUE(project_id)
 );
 
+-- Shared context store for agent collaboration
+CREATE TABLE IF NOT EXISTS agent_contexts (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    run_id TEXT REFERENCES runs(id), -- NULL for project-level context
+    agent_name TEXT NOT NULL, -- Which agent created this context
+    context_key TEXT NOT NULL, -- Lookup key (e.g., 'analysis_result', 'validation_status')
+    context_value TEXT NOT NULL, -- JSON data
+    context_type TEXT NOT NULL DEFAULT 'general', -- 'general', 'handoff', 'validation', 'artifact'
+    expires_at TEXT, -- NULL for permanent, datetime for expiring
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, run_id, context_key) -- One entry per key per scope
+);
+
+-- Agent handoffs for structured inter-agent communication
+CREATE TABLE IF NOT EXISTS agent_handoffs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    run_id TEXT REFERENCES runs(id),
+    from_agent TEXT NOT NULL, -- Agent handing off
+    to_agent TEXT NOT NULL, -- Target agent
+    handoff_type TEXT NOT NULL, -- 'sequential', 'parallel', 'callback'
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'accepted', 'completed', 'failed', 'rejected'
+    payload TEXT NOT NULL, -- JSON handoff data
+    result TEXT, -- JSON result from target agent
+    priority INTEGER NOT NULL DEFAULT 0, -- Higher = more urgent
+    accepted_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Cross-agent validation records
+CREATE TABLE IF NOT EXISTS agent_validations (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    run_id TEXT REFERENCES runs(id),
+    prd_id TEXT REFERENCES prds(id),
+    validation_type TEXT NOT NULL, -- 'code_review', 'risk_assessment', 'quality_check', 'security_scan'
+    validator_agent TEXT NOT NULL, -- Agent performing validation
+    target_agent TEXT, -- Agent whose work is being validated (NULL for artifacts)
+    target_artifact TEXT, -- What's being validated (e.g., 'prd', 'code', 'pr')
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'in_progress', 'passed', 'failed', 'needs_revision'
+    verdict TEXT, -- 'approve', 'reject', 'request_changes'
+    findings TEXT, -- JSON array of issues/observations
+    severity TEXT, -- 'info', 'warning', 'error', 'critical'
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -122,3 +174,15 @@ CREATE INDEX IF NOT EXISTS idx_work_log_created ON work_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_codebase_analysis_project ON codebase_analysis(project_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_project ON proposals(project_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
+
+-- Indexes for agent collaboration tables
+CREATE INDEX IF NOT EXISTS idx_agent_contexts_project ON agent_contexts(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_contexts_run ON agent_contexts(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_contexts_key ON agent_contexts(context_key);
+CREATE INDEX IF NOT EXISTS idx_agent_contexts_type ON agent_contexts(context_type);
+CREATE INDEX IF NOT EXISTS idx_agent_handoffs_project ON agent_handoffs(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_handoffs_status ON agent_handoffs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_handoffs_to ON agent_handoffs(to_agent, status);
+CREATE INDEX IF NOT EXISTS idx_agent_validations_project ON agent_validations(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_validations_status ON agent_validations(status);
+CREATE INDEX IF NOT EXISTS idx_agent_validations_prd ON agent_validations(prd_id);

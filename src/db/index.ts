@@ -31,6 +31,13 @@ function initializeSchema(database: Database.Database): void {
     const schemaPath = join(__dirname, 'schema.sql');
     const schema = readFileSync(schemaPath, 'utf-8');
     database.exec(schema);
+
+    // Migrations for existing databases
+    try {
+        database.exec('ALTER TABLE runs ADD COLUMN worktree_path TEXT');
+    } catch {
+        // Column already exists — ignore
+    }
 }
 
 export function closeDb(): void {
@@ -105,6 +112,7 @@ export interface Run {
     completed_at: string | null;
     error: string | null;
     pr_url: string | null;
+    worktree_path: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -138,6 +146,54 @@ export interface Proposal {
     converted_task_id: string | null;
     created_at: string;
     updated_at: string;
+}
+
+// Agent collaboration types
+export interface AgentContext {
+    id: string;
+    project_id: string;
+    run_id: string | null;
+    agent_name: string;
+    context_key: string;
+    context_value: string;
+    context_type: 'general' | 'handoff' | 'validation' | 'artifact';
+    expires_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AgentHandoff {
+    id: string;
+    project_id: string;
+    run_id: string | null;
+    from_agent: string;
+    to_agent: string;
+    handoff_type: 'sequential' | 'parallel' | 'callback';
+    status: 'pending' | 'accepted' | 'completed' | 'failed' | 'rejected';
+    payload: string;
+    result: string | null;
+    priority: number;
+    accepted_at: string | null;
+    completed_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AgentValidation {
+    id: string;
+    project_id: string;
+    run_id: string | null;
+    prd_id: string | null;
+    validation_type: 'code_review' | 'risk_assessment' | 'quality_check' | 'security_scan';
+    validator_agent: string;
+    target_agent: string | null;
+    target_artifact: string | null;
+    status: 'pending' | 'in_progress' | 'passed' | 'failed' | 'needs_revision';
+    verdict: 'approve' | 'reject' | 'request_changes' | null;
+    findings: string | null;
+    severity: 'info' | 'warning' | 'error' | 'critical' | null;
+    created_at: string;
+    completed_at: string | null;
 }
 
 // Project queries
@@ -280,8 +336,8 @@ export function getRunsByProject(projectId: string): Run[] {
 
 export function insertRun(run: Omit<Run, 'created_at' | 'updated_at'>): void {
     getDb().prepare(`
-        INSERT INTO runs (id, prd_id, project_id, branch, status, iterations_planned, iterations_completed, started_at, completed_at, error, pr_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO runs (id, prd_id, project_id, branch, status, iterations_planned, iterations_completed, started_at, completed_at, error, pr_url, worktree_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         run.id,
         run.prd_id,
@@ -293,11 +349,12 @@ export function insertRun(run: Omit<Run, 'created_at' | 'updated_at'>): void {
         run.started_at,
         run.completed_at,
         run.error,
-        run.pr_url
+        run.pr_url,
+        run.worktree_path
     );
 }
 
-export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'iterations_completed' | 'started_at' | 'completed_at' | 'error' | 'pr_url'>>): void {
+export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'iterations_completed' | 'started_at' | 'completed_at' | 'error' | 'pr_url' | 'worktree_path'>>): void {
     const setClauses: string[] = ['updated_at = datetime(\'now\')'];
     const values: (string | number | null)[] = [];
 
@@ -324,6 +381,10 @@ export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'ite
     if (updates.pr_url !== undefined) {
         setClauses.push('pr_url = ?');
         values.push(updates.pr_url);
+    }
+    if (updates.worktree_path !== undefined) {
+        setClauses.push('worktree_path = ?');
+        values.push(updates.worktree_path);
     }
 
     values.push(id);
@@ -435,4 +496,271 @@ export function clearOldFailedRuns(olderThanDays = 7): number {
           AND datetime(created_at, '+' || ? || ' days') < datetime('now')
     `).run(olderThanDays);
     return result.changes;
+}
+
+// Agent Context queries (Shared Context Store)
+export function setAgentContext(context: Omit<AgentContext, 'created_at' | 'updated_at'>): void {
+    getDb().prepare(`
+        INSERT INTO agent_contexts (id, project_id, run_id, agent_name, context_key, context_value, context_type, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_id, run_id, context_key) DO UPDATE SET
+            agent_name = excluded.agent_name,
+            context_value = excluded.context_value,
+            context_type = excluded.context_type,
+            expires_at = excluded.expires_at,
+            updated_at = datetime('now')
+    `).run(
+        context.id,
+        context.project_id,
+        context.run_id,
+        context.agent_name,
+        context.context_key,
+        context.context_value,
+        context.context_type,
+        context.expires_at
+    );
+}
+
+export function getAgentContext(projectId: string, contextKey: string, runId?: string): AgentContext | undefined {
+    if (runId) {
+        return getDb().prepare(`
+            SELECT * FROM agent_contexts
+            WHERE project_id = ? AND context_key = ? AND run_id = ?
+              AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+        `).get(projectId, contextKey, runId) as AgentContext | undefined;
+    }
+    return getDb().prepare(`
+        SELECT * FROM agent_contexts
+        WHERE project_id = ? AND context_key = ? AND run_id IS NULL
+          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+    `).get(projectId, contextKey) as AgentContext | undefined;
+}
+
+export function getAgentContextsByType(projectId: string, contextType: AgentContext['context_type'], runId?: string): AgentContext[] {
+    if (runId) {
+        return getDb().prepare(`
+            SELECT * FROM agent_contexts
+            WHERE project_id = ? AND context_type = ? AND run_id = ?
+              AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+            ORDER BY created_at DESC
+        `).all(projectId, contextType, runId) as AgentContext[];
+    }
+    return getDb().prepare(`
+        SELECT * FROM agent_contexts
+        WHERE project_id = ? AND context_type = ?
+          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+        ORDER BY created_at DESC
+    `).all(projectId, contextType) as AgentContext[];
+}
+
+export function getAgentContextsByAgent(projectId: string, agentName: string): AgentContext[] {
+    return getDb().prepare(`
+        SELECT * FROM agent_contexts
+        WHERE project_id = ? AND agent_name = ?
+          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+        ORDER BY created_at DESC
+    `).all(projectId, agentName) as AgentContext[];
+}
+
+export function getAllAgentContexts(projectId: string, runId?: string): AgentContext[] {
+    if (runId) {
+        return getDb().prepare(`
+            SELECT * FROM agent_contexts
+            WHERE project_id = ? AND (run_id = ? OR run_id IS NULL)
+              AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+            ORDER BY created_at DESC
+        `).all(projectId, runId) as AgentContext[];
+    }
+    return getDb().prepare(`
+        SELECT * FROM agent_contexts
+        WHERE project_id = ?
+          AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+        ORDER BY created_at DESC
+    `).all(projectId) as AgentContext[];
+}
+
+export function deleteAgentContext(projectId: string, contextKey: string, runId?: string): void {
+    if (runId) {
+        getDb().prepare('DELETE FROM agent_contexts WHERE project_id = ? AND context_key = ? AND run_id = ?')
+            .run(projectId, contextKey, runId);
+    } else {
+        getDb().prepare('DELETE FROM agent_contexts WHERE project_id = ? AND context_key = ? AND run_id IS NULL')
+            .run(projectId, contextKey);
+    }
+}
+
+export function cleanupExpiredContexts(): number {
+    const result = getDb().prepare(`
+        DELETE FROM agent_contexts WHERE expires_at IS NOT NULL AND datetime(expires_at) < datetime('now')
+    `).run();
+    return result.changes;
+}
+
+// Agent Handoff queries
+export function insertAgentHandoff(handoff: Omit<AgentHandoff, 'created_at' | 'updated_at'>): void {
+    getDb().prepare(`
+        INSERT INTO agent_handoffs (id, project_id, run_id, from_agent, to_agent, handoff_type, status, payload, result, priority, accepted_at, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        handoff.id,
+        handoff.project_id,
+        handoff.run_id,
+        handoff.from_agent,
+        handoff.to_agent,
+        handoff.handoff_type,
+        handoff.status,
+        handoff.payload,
+        handoff.result,
+        handoff.priority,
+        handoff.accepted_at,
+        handoff.completed_at
+    );
+}
+
+export function getAgentHandoffById(id: string): AgentHandoff | undefined {
+    return getDb().prepare('SELECT * FROM agent_handoffs WHERE id = ?').get(id) as AgentHandoff | undefined;
+}
+
+export function getPendingHandoffsForAgent(toAgent: string): AgentHandoff[] {
+    return getDb().prepare(`
+        SELECT * FROM agent_handoffs
+        WHERE to_agent = ? AND status = 'pending'
+        ORDER BY priority DESC, created_at ASC
+    `).all(toAgent) as AgentHandoff[];
+}
+
+export function getHandoffsByProject(projectId: string): AgentHandoff[] {
+    return getDb().prepare(`
+        SELECT * FROM agent_handoffs WHERE project_id = ? ORDER BY created_at DESC
+    `).all(projectId) as AgentHandoff[];
+}
+
+export function getHandoffsByRun(runId: string): AgentHandoff[] {
+    return getDb().prepare(`
+        SELECT * FROM agent_handoffs WHERE run_id = ? ORDER BY created_at DESC
+    `).all(runId) as AgentHandoff[];
+}
+
+export function updateAgentHandoff(id: string, updates: Partial<Pick<AgentHandoff, 'status' | 'result' | 'accepted_at' | 'completed_at'>>): void {
+    const setClauses: string[] = ['updated_at = datetime(\'now\')'];
+    const values: (string | null)[] = [];
+
+    if (updates.status !== undefined) {
+        setClauses.push('status = ?');
+        values.push(updates.status);
+    }
+    if (updates.result !== undefined) {
+        setClauses.push('result = ?');
+        values.push(updates.result);
+    }
+    if (updates.accepted_at !== undefined) {
+        setClauses.push('accepted_at = ?');
+        values.push(updates.accepted_at);
+    }
+    if (updates.completed_at !== undefined) {
+        setClauses.push('completed_at = ?');
+        values.push(updates.completed_at);
+    }
+
+    values.push(id);
+    getDb().prepare(`UPDATE agent_handoffs SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
+}
+
+// Agent Validation queries
+export function insertAgentValidation(validation: Omit<AgentValidation, 'created_at'>): void {
+    getDb().prepare(`
+        INSERT INTO agent_validations (id, project_id, run_id, prd_id, validation_type, validator_agent, target_agent, target_artifact, status, verdict, findings, severity, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        validation.id,
+        validation.project_id,
+        validation.run_id,
+        validation.prd_id,
+        validation.validation_type,
+        validation.validator_agent,
+        validation.target_agent,
+        validation.target_artifact,
+        validation.status,
+        validation.verdict,
+        validation.findings,
+        validation.severity,
+        validation.completed_at
+    );
+}
+
+export function getAgentValidationById(id: string): AgentValidation | undefined {
+    return getDb().prepare('SELECT * FROM agent_validations WHERE id = ?').get(id) as AgentValidation | undefined;
+}
+
+export function getValidationsByPrd(prdId: string): AgentValidation[] {
+    return getDb().prepare(`
+        SELECT * FROM agent_validations WHERE prd_id = ? ORDER BY created_at DESC
+    `).all(prdId) as AgentValidation[];
+}
+
+export function getValidationsByRun(runId: string): AgentValidation[] {
+    return getDb().prepare(`
+        SELECT * FROM agent_validations WHERE run_id = ? ORDER BY created_at DESC
+    `).all(runId) as AgentValidation[];
+}
+
+export function getPendingValidations(validatorAgent?: string): AgentValidation[] {
+    if (validatorAgent) {
+        return getDb().prepare(`
+            SELECT * FROM agent_validations
+            WHERE validator_agent = ? AND status IN ('pending', 'in_progress')
+            ORDER BY created_at ASC
+        `).all(validatorAgent) as AgentValidation[];
+    }
+    return getDb().prepare(`
+        SELECT * FROM agent_validations WHERE status IN ('pending', 'in_progress') ORDER BY created_at ASC
+    `).all() as AgentValidation[];
+}
+
+export function updateAgentValidation(id: string, updates: Partial<Pick<AgentValidation, 'status' | 'verdict' | 'findings' | 'severity' | 'completed_at'>>): void {
+    const setClauses: string[] = [];
+    const values: (string | null)[] = [];
+
+    if (updates.status !== undefined) {
+        setClauses.push('status = ?');
+        values.push(updates.status);
+    }
+    if (updates.verdict !== undefined) {
+        setClauses.push('verdict = ?');
+        values.push(updates.verdict);
+    }
+    if (updates.findings !== undefined) {
+        setClauses.push('findings = ?');
+        values.push(updates.findings);
+    }
+    if (updates.severity !== undefined) {
+        setClauses.push('severity = ?');
+        values.push(updates.severity);
+    }
+    if (updates.completed_at !== undefined) {
+        setClauses.push('completed_at = ?');
+        values.push(updates.completed_at);
+    }
+
+    if (setClauses.length > 0) {
+        values.push(id);
+        getDb().prepare(`UPDATE agent_validations SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
+    }
+}
+
+export function getValidationSummary(prdId: string): { passed: number; failed: number; pending: number; needsRevision: number } {
+    const result = getDb().prepare(`
+        SELECT
+            SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN status IN ('pending', 'in_progress') THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'needs_revision' THEN 1 ELSE 0 END) as needsRevision
+        FROM agent_validations WHERE prd_id = ?
+    `).get(prdId) as { passed: number; failed: number; pending: number; needsRevision: number };
+    return {
+        passed: result.passed || 0,
+        failed: result.failed || 0,
+        pending: result.pending || 0,
+        needsRevision: result.needsRevision || 0
+    };
 }
