@@ -67,3 +67,23 @@ Initialized by Fleet
   - Verify JSON serializability explicitly
   - Use toHaveProperty() for structure checks
 ---
+## $(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ") - US-007
+- Added comprehensive integration tests for status command JSON output
+- **Files created:**
+  - src/cli/commands/status.test.ts (13 new tests, 370 lines)
+- **Tests cover:**
+  - JSON output behavior (valid JSON, required fields, no ANSI codes, empty state, multiple items, pretty-printing with 2-space indent)
+  - Terminal output behavior (formatted output, ANSI escape codes, distinction from JSON)
+  - Data consistency (JSON serialization preserves all data, optional fields handled correctly)
+  - Command interface validation (exports exist, --json option present)
+- **Verification:**
+  - ✓ All 58 tests pass (13 new integration tests, 45 existing)
+  - ✓ Typecheck passes
+  - ✓ Committed with message: feat: US-007 - Add Integration Tests
+- **Learnings for future iterations:**
+  - When testing Commander.js commands, test behavior rather than direct command execution due to action handler registration complexity
+  - Mock generator functions (getBriefingData, generateBriefing) rather than trying to mock Commander's parseAsync
+  - Test the data transformations and outputs, not just the command wiring
+  - Integration tests can focus on behavior verification without full end-to-end execution
+---
+
