@@ -55,6 +55,7 @@ export class DeveloperAgent implements Agent {
             // Spawn Ralph
             const result = await this.spawnRalph(
                 workDir,
+                project.path,
                 executionConfig.tool,
                 executionConfig.defaultIterations
             );
@@ -150,15 +151,20 @@ export class DeveloperAgent implements Agent {
 
     private async spawnRalph(
         workDir: string,
+        projectPath: string,
         tool: string,
         maxIterations: number
     ): Promise<{ exitCode: number; iterations: number; error?: string }> {
         return new Promise((resolve) => {
-            // Look for ralph.sh in known locations
+            // Look for ralph.sh in known locations - check both worktree and original project path
+            // (ralph.sh may be untracked and not present in the worktree)
             const searchPaths = [
                 join(workDir, 'ralph.sh'),
                 join(workDir, 'scripts', 'ralph', 'ralph.sh'),
                 join(workDir, 'scripts', 'ralph.sh'),
+                join(projectPath, 'ralph.sh'),
+                join(projectPath, 'scripts', 'ralph', 'ralph.sh'),
+                join(projectPath, 'scripts', 'ralph.sh'),
             ];
 
             const ralphScript = searchPaths.find((p) => existsSync(p));
