@@ -31,3 +31,17 @@ Initialized by Fleet
   - BriefingData interface includes: completedOvernight, pendingApprovals, blockedOrFailed, runningNow, suggestedPriorities
   - Don't assume functionality is missing - check implementation first
 ---
+
+## 2026-01-28T12:30 - US-002 through US-005
+- Marked stories US-002, US-003, US-004, US-005 as complete
+- All acceptance criteria already met by existing implementation
+- **Verified each story:**
+  - US-002: --json flag exists and works
+  - US-003: BriefingData interface properly defined
+  - US-004: JSON output logic implemented and tested
+  - US-005: Terminal output preserved with colors
+- **Remaining work:** US-006 (unit tests) and US-007 (integration tests)
+- **Learnings for future iterations:**
+  - When feature is already implemented, validate and document rather than re-implement
+  - Check all related files before assuming work is needed
+---
