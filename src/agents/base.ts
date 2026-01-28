@@ -1,4 +1,5 @@
 import type { Project, Task, Prd, Run } from '../db/index.js';
+import { ContextStore, createContextStore } from '../collaboration/context-store.js';
 
 /**
  * Base interface for all Fleet agents
@@ -22,6 +23,8 @@ export interface AgentContext {
     prd?: Prd;
     run?: Run;
     workDir: string;
+    /** Shared context store for agent collaboration */
+    contextStore?: ContextStore;
 }
 
 /**
@@ -32,4 +35,21 @@ export interface AgentResult {
     output?: string;
     error?: string;
     artifacts?: Record<string, unknown>;
+}
+
+/**
+ * Create an agent context with collaboration features
+ */
+export function createAgentContext(
+    baseContext: Omit<AgentContext, 'contextStore'>,
+    agentName: string
+): AgentContext {
+    return {
+        ...baseContext,
+        contextStore: createContextStore({
+            projectId: baseContext.project.id,
+            runId: baseContext.run?.id,
+            agentName,
+        }),
+    };
 }
