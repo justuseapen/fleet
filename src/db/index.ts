@@ -38,6 +38,16 @@ function initializeSchema(database: Database.Database): void {
     } catch {
         // Column already exists — ignore
     }
+    try {
+        database.exec('ALTER TABLE runs ADD COLUMN last_progress_at TEXT');
+    } catch {
+        // Column already exists — ignore
+    }
+    try {
+        database.exec('ALTER TABLE runs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0');
+    } catch {
+        // Column already exists — ignore
+    }
 }
 
 export function closeDb(): void {
@@ -113,6 +123,8 @@ export interface Run {
     error: string | null;
     pr_url: string | null;
     worktree_path: string | null;
+    last_progress_at: string | null;
+    retry_count: number;
     created_at: string;
     updated_at: string;
 }
@@ -336,8 +348,8 @@ export function getRunsByProject(projectId: string): Run[] {
 
 export function insertRun(run: Omit<Run, 'created_at' | 'updated_at'>): void {
     getDb().prepare(`
-        INSERT INTO runs (id, prd_id, project_id, branch, status, iterations_planned, iterations_completed, started_at, completed_at, error, pr_url, worktree_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO runs (id, prd_id, project_id, branch, status, iterations_planned, iterations_completed, started_at, completed_at, error, pr_url, worktree_path, last_progress_at, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         run.id,
         run.prd_id,
@@ -350,11 +362,13 @@ export function insertRun(run: Omit<Run, 'created_at' | 'updated_at'>): void {
         run.completed_at,
         run.error,
         run.pr_url,
-        run.worktree_path
+        run.worktree_path,
+        run.last_progress_at,
+        run.retry_count
     );
 }
 
-export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'iterations_completed' | 'started_at' | 'completed_at' | 'error' | 'pr_url' | 'worktree_path'>>): void {
+export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'iterations_completed' | 'started_at' | 'completed_at' | 'error' | 'pr_url' | 'worktree_path' | 'last_progress_at' | 'retry_count'>>): void {
     const setClauses: string[] = ['updated_at = datetime(\'now\')'];
     const values: (string | number | null)[] = [];
 
@@ -385,6 +399,14 @@ export function updateRun(id: string, updates: Partial<Pick<Run, 'status' | 'ite
     if (updates.worktree_path !== undefined) {
         setClauses.push('worktree_path = ?');
         values.push(updates.worktree_path);
+    }
+    if (updates.last_progress_at !== undefined) {
+        setClauses.push('last_progress_at = ?');
+        values.push(updates.last_progress_at);
+    }
+    if (updates.retry_count !== undefined) {
+        setClauses.push('retry_count = ?');
+        values.push(updates.retry_count);
     }
 
     values.push(id);

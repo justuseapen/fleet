@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS runs (
     error TEXT,
     pr_url TEXT,
     worktree_path TEXT,
+    last_progress_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

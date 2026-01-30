@@ -11,6 +11,8 @@ import {
 import type { ExecutionConfig } from '../types.js';
 import { DeveloperAgent } from '../agents/developer.js';
 import { createWorktree, removeWorktree } from '../git/worktree.js';
+import { RecoveryManager } from './recovery-manager.js';
+import { logEvent } from '../logging/index.js';
 
 interface ScheduledRun {
     project: Project;
@@ -87,6 +89,8 @@ export class Scheduler {
                 error: null,
                 pr_url: null,
                 worktree_path: null,
+                last_progress_at: null,
+                retry_count: 0,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             };
@@ -99,27 +103,54 @@ export class Scheduler {
     }
 
     /**
-     * Execute scheduled runs in parallel
+     * Execute scheduled runs in parallel with background health monitoring.
      */
     async executeRuns(runs: ScheduledRun[]): Promise<Map<string, { success: boolean; error?: string }>> {
         const results = new Map<string, { success: boolean; error?: string }>();
         const promises: Promise<void>[] = [];
+        const recoveryManager = new RecoveryManager();
 
-        for (const { project, prd, run } of runs) {
-            this.runningProjects.add(project.id);
-
-            const promise = this.executeSingleRun(project, prd, run)
-                .then(result => {
-                    results.set(run.id, result);
-                })
-                .finally(() => {
-                    this.runningProjects.delete(project.id);
+        // Background health check loop
+        const healthCheckInterval = setInterval(async () => {
+            try {
+                const attempts = await recoveryManager.checkAndRecover();
+                for (const attempt of attempts) {
+                    logEvent({
+                        level: attempt.action === 'marked_failed' ? 'error' : 'warn',
+                        runId: attempt.runId,
+                        projectId: attempt.projectId,
+                        message: `Recovery: ${attempt.action} (${attempt.reason})`,
+                        details: { retryCount: attempt.retryCount },
+                    });
+                }
+            } catch (err) {
+                logEvent({
+                    level: 'error',
+                    message: `Health check error: ${err instanceof Error ? err.message : String(err)}`,
                 });
+            }
+        }, 60_000);
 
-            promises.push(promise);
+        try {
+            for (const { project, prd, run } of runs) {
+                this.runningProjects.add(project.id);
+
+                const promise = this.executeSingleRun(project, prd, run)
+                    .then(result => {
+                        results.set(run.id, result);
+                    })
+                    .finally(() => {
+                        this.runningProjects.delete(project.id);
+                    });
+
+                promises.push(promise);
+            }
+
+            await Promise.all(promises);
+        } finally {
+            clearInterval(healthCheckInterval);
         }
 
-        await Promise.all(promises);
         return results;
     }
 
